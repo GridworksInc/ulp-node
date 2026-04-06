@@ -1,4 +1,28 @@
 {
+  "name": "ulp-node",
+  "version": "1.0.0",
+  "description": "Universal Ledger Protocol — Reference implementation for secure, standardized business document exchange",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GridworksInc/gbp-node"
+  },
+  "keywords": [
+    "ulp",
+    "invoice",
+    "accounting",
+    "protocol",
+    "hash-chain",
+    "ledger",
+    "e-invoice",
+    "peppol"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start:gateway": "node dist/server.js",
+    "start:receiver": "node dist/receiver.js",
+    "audit": "node dist/auditor.js"
+  },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "typescript": "^5.9.3"
