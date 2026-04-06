@@ -1,4 +1,4 @@
-import { createPacket, GBPPacket, verifyIntegrity } from './index'; // 前回のindex.tsをインポート
+import { createPacket, ULPPacket, verifyIntegrity } from './index'; // 前回のindex.tsをインポート
 import { InvoicePayload } from './types/invoice';
 
 // A社（送信側）のボキャブラリー生成
@@ -12,16 +12,16 @@ const invoiceData: InvoicePayload = {
     due_date: "2026-04-06"
 };
 
-// GBPパケットの生成
+// ULPパケットの生成
 const packetA = createPacket(null, invoiceData);
 
-console.log("--- GBP Protocol Handshake ---");
+console.log("--- ULP Protocol Handshake ---");
 console.log("送信パケット:", packetA);
 
 // B社（受信側）の検証ロジック
 // (本来はここをネットワーク通信にするが、まずはメモリ上のロジックで検証)
 const isIntegrityValid = verifyIntegrity(packetA, { // 実際はparentを比較
-    gw_protocol: 'GBP/1.0',
+    ulp_version: "ULP/1.0",
     payload: {},
     parent_hash: null,
     timestamp: 0

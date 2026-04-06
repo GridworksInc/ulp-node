@@ -221,6 +221,6 @@ ULP is designed to be compatible with:
 
 A TypeScript reference implementation is available at:
 
-https://github.com/GridworksInc/gbp-node
+https://github.com/GridworksInc/ulp-node
 
 Implementations in other languages are encouraged.

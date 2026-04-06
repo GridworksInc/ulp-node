@@ -12,7 +12,7 @@ function calculateHash(packet: any): string {
 }
 
 function auditLedger() {
-    console.log("--- [GBG Auditor] Starting Audit... ---");
+    console.log("--- [ULP Auditor] Starting Audit... ---");
     if (!fs.existsSync(LEDGER_PATH)) return console.log("Ledger empty.");
 
     const data = fs.readFileSync(LEDGER_PATH, 'utf-8');
@@ -47,7 +47,7 @@ function auditLedger() {
         previousHash = currentHash;
     });
 
-    console.log("--- [GBG Auditor] Audit Complete: Integrity Confirmed! ---");
+    console.log("--- [ULP Auditor] Audit Complete: Integrity Confirmed! ---");
 }
 
 auditLedger();

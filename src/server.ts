@@ -37,5 +37,5 @@ app.post('/api/send-invoice', async (req, res) => {
 });
 
 app.listen(3000, () => {
-    console.log('GBG Gateway Node running on port 3000');
+    console.log('ULP Gateway Node running on port 3000');
 });

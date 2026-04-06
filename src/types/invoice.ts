@@ -1,5 +1,5 @@
 /**
- * GBP Global Business Protocol - Invoice Schema v1.0
+ * ULP Universal Ledger Protocol - Invoice Schema v1.0
  * 世界中のあらゆるシステムが解釈可能な「請求書」の標準形式
  */
 
