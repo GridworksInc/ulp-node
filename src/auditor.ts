@@ -1,53 +1,43 @@
-// src/auditor.ts
+// src/auditor.ts — ULP Ledger Auditor (CLI)
+//
+// server.ts を起動せずに ledger.jsonl を直接検証するツール。
+// server.ts の GET /ulp/v1/ledger/audit と同じロジック(hashchain.ts)を使う。
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
+import { auditLedger, parseLedgerFile } from './hashchain';
 
-const LEDGER_PATH = path.join(__dirname, 'ledger.jsonl');
+const DATA_DIR = process.env.ULP_DATA_DIR || path.join(__dirname, '..', 'data');
+const LEDGER_PATH = path.join(DATA_DIR, 'ledger.jsonl');
 
-// サーバー側と完全に同じロジックでハッシュを計算する
-function calculateHash(packet: any): string {
-    const dataToHash = JSON.stringify(packet.payload) + packet.parent_hash;
-    return crypto.createHash('sha256').update(dataToHash).digest('hex');
+function main(): void {
+    console.log('--- [ULP Auditor] Starting Audit... ---');
+    console.log(`[ULP Auditor] Ledger: ${LEDGER_PATH}`);
+
+    if (!fs.existsSync(LEDGER_PATH)) {
+        console.log('[ULP Auditor] Ledger not found — nothing to audit.');
+        return;
+    }
+
+    const raw = fs.readFileSync(LEDGER_PATH, 'utf-8');
+    const ledger = parseLedgerFile(raw);
+
+    if (ledger.length === 0) {
+        console.log('[ULP Auditor] Ledger is empty.');
+        return;
+    }
+
+    const result = auditLedger(ledger);
+
+    if (result.valid) {
+        console.log(`[PASS] All ${result.total} envelope(s) verified.`);
+        console.log('--- [ULP Auditor] Audit Complete: Integrity Confirmed! ---');
+        return;
+    }
+
+    console.error(`[CRITICAL] Integrity violation detected at envelope #${result.violation?.violation_at}!`);
+    console.error(JSON.stringify(result.violation, null, 2));
+    console.error('--- [ULP Auditor] Audit FAILED: Tamper detected. ---');
+    process.exit(1);
 }
 
-function auditLedger() {
-    console.log("--- [ULP Auditor] Starting Audit... ---");
-    if (!fs.existsSync(LEDGER_PATH)) return console.log("Ledger empty.");
-
-    const data = fs.readFileSync(LEDGER_PATH, 'utf-8');
-    const packets = data.split('\n').filter(line => line.trim() !== '').map(line => JSON.parse(line));
-
-    // ここが重要！最初は文字列ではなく null です。
-    let previousHash: string | null = null;
-
-    packets.forEach((packet, index) => {
-        // 1. リンクの検証
-        if (index === 0) {
-            // 最初のパケット(Genesis)は、親が null であることを確認
-            if (packet.parent_hash !== null) {
-                console.error(`[CRITICAL] Genesis packet is invalid!`);
-                process.exit(1);
-            }
-        } else {
-            // 2番目以降のパケットは、親が前のパケットのハッシュと一致することを確認
-            if (packet.parent_hash !== previousHash) {
-                console.error(`[CRITICAL] Tamper detected at packet #${index + 1}!`);
-                console.error(`Expected: ${previousHash}, Found: ${packet.parent_hash}`);
-                process.exit(1);
-            }
-        }
-
-        // 2. 現在のパケットのハッシュを計算（次のバトンにするために）
-        const currentHash = calculateHash(packet);
-
-        console.log(`[PASS] Packet #${index + 1} verified. Hash: ${currentHash.substring(0, 10)}...`);
-
-        // 次のループのために、現在のハッシュを previousHash にセット
-        previousHash = currentHash;
-    });
-
-    console.log("--- [ULP Auditor] Audit Complete: Integrity Confirmed! ---");
-}
-
-auditLedger();
+main();

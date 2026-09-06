@@ -19,8 +19,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "start:gateway": "node dist/server.js",
-    "start:receiver": "node dist/receiver.js",
+    "start": "node dist/server.js",
     "audit": "node dist/auditor.js"
   },
   "devDependencies": {
@@ -30,6 +29,8 @@
   },
   "dependencies": {
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
     "uuid": "^13.0.0"
   }
 }

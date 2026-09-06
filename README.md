@@ -24,30 +24,49 @@ ULP solves this with:
 npm install
 
 # Build
-npx tsc
+npm run build
 
-# Run gateway node (port 3000)
-node dist/server.js
+# Run the node (default port 4800)
+npm start
 
-# Run receiver node (port 3001)
-node dist/receiver.js
-
-# Send a test invoice
-curl -X POST http://localhost:3000/api/send-invoice \
+# Send a test envelope
+curl -X POST http://localhost:4800/ulp/v1/envelope \
   -H "Content-Type: application/json" \
   -d '{
-    "invoice_id": "INV-001",
-    "sender_id": "company-a",
-    "receiver_id": "company-b",
-    "amount": 50000,
-    "currency": "JPY",
-    "issue_date": "2026-04-06",
-    "due_date": "2026-05-06"
+    "envelope_type": "invoice",
+    "payload": {
+      "invoice_id": "INV-001",
+      "amount": 50000,
+      "currency": "JPY",
+      "issue_date": "2026-04-06",
+      "due_date": "2026-05-06"
+    },
+    "sender": { "id": "company-a", "name": "Company A" },
+    "receiver": { "id": "company-b", "name": "Company B" }
   }'
 
-# Audit the ledger
-node dist/auditor.js
+# Check node info (no auth required)
+curl http://localhost:4800/ulp/v1/info
+
+# Audit the ledger via HTTP
+curl http://localhost:4800/ulp/v1/ledger/audit
+
+# ...or audit the ledger file directly, without a running server
+npm run audit
 ```
+
+### Configuration
+
+The node is configured entirely via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|--------------|
+| `ULP_PORT` | `4800` | HTTP port to listen on |
+| `ULP_DATA_DIR` | `./data` | Directory holding `ledger.jsonl` |
+| `ULP_API_KEY` | *(unset)* | Bearer token required on all endpoints except `/ulp/v1/info`. **Required when `NODE_ENV=production`** — the node refuses to start without it. |
+| `ULP_RATE_LIMIT_PER_MIN` | `300` | Requests per minute per client, before `429`/`RATE_LIMITED` |
+| `ULP_MAX_BODY_SIZE` | `256kb` | Max JSON request body size |
+| `ULP_NODE_ID` / `ULP_NODE_NAME` | *(staging defaults)* | Identity reported at `/ulp/v1/info` |
 
 ## Documentation
 
@@ -59,10 +78,12 @@ node dist/auditor.js
 
 ## Architecture
 
+A single ULP node exposes an HTTP API and maintains an append-only, hash-chained ledger. Any two systems can exchange documents through it without knowing anything about each other's internals:
+
 ```
 ┌─────────────┐         ┌─────────────┐         ┌─────────────┐
 │  System A    │         │  ULP Node   │         │  System B    │
-│ (Worksgrid)  │──POST──▶│  (Gateway)  │──POST──▶│ (Any ERP)   │
+│ (Worksgrid)  │──POST──▶│             │──POST──▶│ (Any ERP)   │
 │              │◀─────── │             │ ◀───────│              │
 └─────────────┘  hash   └──────┬──────┘  hash   └─────────────┘
                                │
@@ -71,6 +92,8 @@ node dist/auditor.js
                         │ (Hash Chain)│
                         └─────────────┘
 ```
+
+`src/server.ts` implements the full node: it accepts envelopes, appends them to `data/ledger.jsonl`, and serves lookup/audit endpoints. `src/hashchain.ts` holds the canonical-JSON and hash-chain logic shared by the server and the standalone `src/auditor.ts` CLI tool.
 
 ## Design Principles
 
