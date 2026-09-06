@@ -151,6 +151,32 @@ Run integrity audit on the ledger.
 
 ---
 
+### GET /ulp/v1/ledger/timestamps
+
+List third-party (RFC 3161 TSA) timestamps obtained for the ledger head. See [HASHCHAIN.md § Third-Party Timestamping](HASHCHAIN.md#third-party-timestamping-tsa) for how these relate to individual envelopes.
+
+**Response (200):**
+
+```json
+{
+  "enabled": true,
+  "total": 2,
+  "timestamps": [
+    {
+      "sequence": 847,
+      "head_hash": "e3b0c44298fc1c149afbf4c8996fb924...",
+      "token": "MIIB...==",
+      "nonce": "80415660967050815553873144371201521743",
+      "requested_at": "2026-04-06T10:31:00.000Z"
+    }
+  ]
+}
+```
+
+`token` is the base64-encoded DER `TimeStampToken` (RFC 3161 `ContentInfo`/`SignedData`) returned by the TSA. `enabled` is `false` when `ULP_TSA_URL` is not configured, in which case `timestamps` is always empty.
+
+---
+
 ### GET /ulp/v1/info
 
 Public endpoint — no authentication required. Returns node information.

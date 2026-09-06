@@ -144,3 +144,37 @@ Blockchain solves the problem of **trustless consensus among strangers**. ULP op
 - Digital signatures provide **non-repudiation** without consensus
 
 Using a blockchain for B2B invoice exchange would be like using a nuclear reactor to charge a phone — technically possible, but wildly disproportionate to the problem.
+
+## Third-Party Timestamping (TSA)
+
+The hash chain proves *relative* ordering and tamper-evidence, but it cannot by itself prove *when* an envelope was created — a node operator controls the clock. For stronger, independently-verifiable proof of existence-at-a-time (e.g. for 電子帳簿保存法 compliance), a ULP node MAY submit its ledger `head_hash` to an external RFC 3161 Time-Stamp Authority (TSA), such as Amano/Seiko Solutions' timestamping service in Japan.
+
+### Why timestamp the head, not every envelope
+
+At high volume (potentially tens of millions to hundreds of millions of envelopes/day), requesting a timestamp per-envelope is impractical — commercial TSAs are priced and rate-limited per request, and per-request latency would dominate write throughput.
+
+Instead, a ULP node timestamps only the **current head_hash**, on a fixed interval (e.g. every minute), skipping the request entirely if the head hasn't advanced since the last one. This bounds TSA request volume to a constant rate regardless of envelope throughput — the same principle used by [OpenTimestamps](https://opentimestamps.org/) for Bitcoin-anchored proofs.
+
+```
+Envelope #1 ... Envelope #847  ──┐
+                                  ├──▶ head_hash = H(847)  ──▶ TSA timestamp @ t=60s
+Envelope #848 ... Envelope #2200 ┘
+                                  ├──▶ head_hash = H(2200) ──▶ TSA timestamp @ t=120s
+...
+```
+
+### Proving a single envelope's timestamp
+
+Because every envelope's hash is transitively covered by every later envelope's hash (via `parent_hash`), proving envelope *N* existed before a timestamped head *H* only requires:
+
+1. Find the earliest timestamp record whose `sequence >= N`
+2. Walk `parent_hash` backwards from that record's `head_hash` down to envelope *N*, recomputing each hash
+3. If the chain is intact, envelope *N* provably existed at or before the TSA's timestamp
+
+### Implementation
+
+- `src/timestamp.ts` — RFC 3161 TSP client (builds `TimeStampReq`, sends `application/timestamp-query`, parses `TimeStampResp`)
+- `src/timestampScheduler.ts` — polls the ledger head on an interval and appends granted timestamps to `data/timestamps.jsonl`
+- `GET /ulp/v1/ledger/timestamps` — lists timestamp records for external verification
+
+This feature is opt-in and disabled by default (see `ULP_TSA_URL` in [README.md](../README.md)). It does not affect the ledger's own hash-chain integrity checks — TSA outages or misconfiguration never block envelope ingestion.

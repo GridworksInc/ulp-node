@@ -6,13 +6,17 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4, validate as isUuid } from 'uuid';
 import { calculateHash, auditLedger, parseLedgerFile, LedgerEntry } from './hashchain';
+import { loadTsaConfigFromEnv } from './timestamp';
+import { TimestampScheduler, loadTimestampRecords } from './timestampScheduler';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const PORT = parseInt(process.env.ULP_PORT || '4800', 10);
 const DATA_DIR = process.env.ULP_DATA_DIR || path.join(__dirname, '..', 'data');
 const LEDGER_PATH = path.join(DATA_DIR, 'ledger.jsonl');
+const TIMESTAMPS_PATH = path.join(DATA_DIR, 'timestamps.jsonl');
 const API_KEY = process.env.ULP_API_KEY || '';
 const MAX_BODY_SIZE = process.env.ULP_MAX_BODY_SIZE || '256kb';
+const TSA_INTERVAL_MS = parseInt(process.env.ULP_TSA_INTERVAL_MS || '60000', 10);
 
 // --- 本番環境での事故防止 ---
 // API_KEY未設定のまま本番稼働すると、台帳への書き込みAPIが誰でも叩ける状態になる。
@@ -41,6 +45,13 @@ app.use(
 // --- データディレクトリ作成 ---
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+// --- 第三者タイムスタンプ(TSA)設定 ---
+// ULP_TSA_URL 未設定なら機能無効(既存動作に影響なし)。
+const tsaConfig = loadTsaConfigFromEnv();
+if (!tsaConfig) {
+    console.log('[ULP] TSA timestamping disabled (ULP_TSA_URL not set)');
 }
 
 // --- 台帳 (オンメモリ) ---
@@ -203,6 +214,17 @@ app.get('/ulp/v1/ledger/audit', authenticate, (req, res) => {
     }
 });
 
+// GET /ulp/v1/ledger/timestamps — TSAによる定点タイムスタンプ一覧
+//
+// Envelope単位ではなく head_hash 単位でタイムスタンプを取得しているため、
+// あるEnvelopeの存在証明は「そのenvelope.sequence <= record.sequence」となる
+// 最初の record を探し、record.head_hash からハッシュチェーンを遡って
+// そのEnvelopeのhashに到達できることを確認する形で行う。
+app.get('/ulp/v1/ledger/timestamps', authenticate, (_req, res) => {
+    const records = loadTimestampRecords(TIMESTAMPS_PATH);
+    res.json({ enabled: tsaConfig !== null, timestamps: records, total: records.length });
+});
+
 // GET /ulp/v1/info — 公開ノード情報 (認証不要)
 app.get('/ulp/v1/info', (_req, res) => {
     res.json({
@@ -233,16 +255,25 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 // ========== 起動 ==========
 loadLedger();
 
+const tsaScheduler = tsaConfig
+    ? new TimestampScheduler(tsaConfig, TSA_INTERVAL_MS, TIMESTAMPS_PATH, () => ({
+          hash: latestHash,
+          sequence: ledger.length,
+      }))
+    : null;
+
 const server = app.listen(PORT, () => {
     console.log(`[ULP] Universal Ledger Protocol Node running on port ${PORT} (env: ${NODE_ENV})`);
     console.log(`[ULP] Ledger: ${LEDGER_PATH}`);
     console.log(`[ULP] Envelopes: ${ledger.length}`);
     console.log(`[ULP] Auth: ${API_KEY ? 'enabled' : 'disabled (no ULP_API_KEY set)'}`);
+    tsaScheduler?.start();
 });
 
 // --- Graceful shutdown ---
 function shutdown(signal: string): void {
     console.log(`[ULP] Received ${signal}, shutting down gracefully...`);
+    tsaScheduler?.stop();
     server.close(() => {
         console.log('[ULP] Server closed.');
         process.exit(0);

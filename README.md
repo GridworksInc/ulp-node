@@ -53,6 +53,10 @@ curl http://localhost:4800/ulp/v1/ledger/audit
 
 # ...or audit the ledger file directly, without a running server
 npm run audit
+
+# List third-party (TSA) timestamps obtained for the ledger head
+# (empty unless ULP_TSA_URL is configured)
+curl http://localhost:4800/ulp/v1/ledger/timestamps
 ```
 
 ### Configuration
@@ -67,6 +71,10 @@ The node is configured entirely via environment variables:
 | `ULP_RATE_LIMIT_PER_MIN` | `300` | Requests per minute per client, before `429`/`RATE_LIMITED` |
 | `ULP_MAX_BODY_SIZE` | `256kb` | Max JSON request body size |
 | `ULP_NODE_ID` / `ULP_NODE_NAME` | *(staging defaults)* | Identity reported at `/ulp/v1/info` |
+| `ULP_TSA_URL` | *(unset)* | RFC 3161 Time-Stamp Authority endpoint (e.g. Amano/Seiko Solutions). Unset disables third-party timestamping entirely. |
+| `ULP_TSA_USERNAME` / `ULP_TSA_PASSWORD` | *(unset)* | Basic auth credentials for the TSA, if required |
+| `ULP_TSA_POLICY_OID` | *(unset)* | TSA policy OID, if the TSA requires one |
+| `ULP_TSA_INTERVAL_MS` | `60000` | How often to timestamp the current ledger head (see [spec/HASHCHAIN.md](spec/HASHCHAIN.md#third-party-timestamping-tsa)) |
 
 ## Documentation
 
