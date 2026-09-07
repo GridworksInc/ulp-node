@@ -222,6 +222,8 @@ class PeerSync {
  */
 export class ReplicationManager {
     private peerSyncs: PeerSync[] = [];
+    private initTimers: NodeJS.Timeout[] = [];
+    private stopped = false;
 
     constructor(
         private readonly peers: PeerConfig[],
@@ -234,8 +236,17 @@ export class ReplicationManager {
         if (this.peers.length === 0) return;
         fs.mkdirSync(this.replicasRootDir, { recursive: true });
 
-        for (const peer of this.peers) {
-            const sync = new PeerSync(peer, this.replicasRootDir, this.intervalMs, this.batchSize);
+        // 各peerの初期化(GET /ulp/v1/info によるnode_id解決)を独立してリトライする。
+        // 起動タイミングによっては相手ノードがまだ立ち上がっていないことがあり得るため
+        // (例: worksp/worksdの再起動が完全に同時ではない場合)、一度失敗しても
+        // intervalMsごとに再試行し続ける。既存のPeer登録には影響しない。
+        this.peers.forEach(peer => this.initPeerWithRetry(peer));
+    }
+
+    private initPeerWithRetry(peer: PeerConfig): void {
+        const sync = new PeerSync(peer, this.replicasRootDir, this.intervalMs, this.batchSize);
+        const attempt = async (): Promise<void> => {
+            if (this.stopped) return;
             try {
                 await sync.init();
                 sync.start();
@@ -243,14 +254,20 @@ export class ReplicationManager {
                 console.log(`[ULP Replication] Peer registered: ${peer.url}`);
             } catch (err) {
                 console.error(
-                    `[ULP Replication] Failed to initialize peer ${peer.url}:`,
+                    `[ULP Replication] Failed to initialize peer ${peer.url} (retrying in ${this.intervalMs}ms):`,
                     err instanceof Error ? err.message : err
                 );
+                const timer = setTimeout(() => void attempt(), this.intervalMs);
+                timer.unref();
+                this.initTimers.push(timer);
             }
-        }
+        };
+        void attempt();
     }
 
     stop(): void {
+        this.stopped = true;
+        this.initTimers.forEach(t => clearTimeout(t));
         this.peerSyncs.forEach(s => s.stop());
     }
 
