@@ -75,6 +75,10 @@ The node is configured entirely via environment variables:
 | `ULP_TSA_USERNAME` / `ULP_TSA_PASSWORD` | *(unset)* | Basic auth credentials for the TSA, if required |
 | `ULP_TSA_POLICY_OID` | *(unset)* | TSA policy OID, if the TSA requires one |
 | `ULP_TSA_INTERVAL_MS` | `60000` | How often to timestamp the current ledger head (see [spec/HASHCHAIN.md](spec/HASHCHAIN.md#third-party-timestamping-tsa)) |
+| `ULP_PEERS` | *(unset)* | Comma-separated peer nodes to replicate (e.g. a DR node, or a customer's own node). Each entry is `url` or `url\|api_key`. Unset disables replication entirely. See [spec/REPLICATION.md](spec/REPLICATION.md). |
+| `ULP_PEER_SYNC_INTERVAL_MS` | `5000` | Polling interval per peer |
+| `ULP_PEER_SYNC_BATCH_SIZE` | `200` | Envelopes fetched per replication request |
+| `ULP_MAX_LIST_LIMIT` | `200` | Server-side cap on `limit` for envelope listing endpoints (raise on nodes serving high-volume replication) |
 
 ## Documentation
 
@@ -83,6 +87,7 @@ The node is configured entirely via environment variables:
 - **[Invoice Schema](spec/INVOICE.md)** — Invoice payload definition
 - **[Hash Chain](spec/HASHCHAIN.md)** — Integrity verification mechanism
 - **[API Reference](spec/API.md)** — HTTP endpoint specification
+- **[Node Replication](spec/REPLICATION.md)** — Multi-node (DR / customer-hosted) synchronization
 
 ## Architecture
 
@@ -102,6 +107,8 @@ A single ULP node exposes an HTTP API and maintains an append-only, hash-chained
 ```
 
 `src/server.ts` implements the full node: it accepts envelopes, appends them to `data/ledger.jsonl`, and serves lookup/audit endpoints. `src/hashchain.ts` holds the canonical-JSON and hash-chain logic shared by the server and the standalone `src/auditor.ts` CLI tool.
+
+Multiple nodes (e.g. a production node and a DR node, or independently-operated customer nodes) can replicate each other via `ULP_PEERS` — each keeps writing only to its own chain and pulls verified, read-only copies of its peers'. See [spec/REPLICATION.md](spec/REPLICATION.md) for why this scales to national-scale transaction volume without needing distributed consensus.
 
 ## Design Principles
 

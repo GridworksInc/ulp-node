@@ -177,6 +177,46 @@ List third-party (RFC 3161 TSA) timestamps obtained for the ledger head. See [HA
 
 ---
 
+### GET /ulp/v1/peers
+
+List this node's replication status for each configured peer. See [REPLICATION.md](REPLICATION.md) for the full sync protocol.
+
+**Response (200):**
+
+```json
+{
+  "peers": [
+    {
+      "node_id": "node-worksd",
+      "peer_url": "https://worksd.internal:4800",
+      "last_sequence": 15234891,
+      "last_hash": "e3b0c44298fc1c149afbf4c8996fb924...",
+      "last_synced_at": "2026-04-06T10:31:00.000Z",
+      "status": "ok",
+      "last_error": null
+    }
+  ]
+}
+```
+
+`status` is `"ok"`, `"error"` (last sync attempt failed — e.g. hash-chain verification failed, or the peer was unreachable; `last_error` explains why), or `"pending"` (not yet synced). Empty array if `ULP_PEERS` is unset.
+
+---
+
+### GET /ulp/v1/envelopes/since_sequence (query parameter)
+
+`GET /ulp/v1/envelopes` accepts an additional `since_sequence` query parameter: only envelopes with `sequence > since_sequence` are returned. This is the cursor used for incremental replication, but it composes with the existing filters (`sender_id`, `receiver_id`, `envelope_type`, `from`, `to`) for any client that wants an incremental feed.
+
+---
+
+### GET /ulp/v1/replicas/{node_id}/envelopes
+
+Read back a peer's ledger as replicated (and hash-chain-verified) by this node. Supports `since_sequence`, `limit`, `offset` like `/ulp/v1/envelopes`. Returns `404` if this node holds no replica for `node_id`.
+
+This lets a node relay a peer's chain to a third node it doesn't directly poll (multi-hop federation).
+
+---
+
 ### GET /ulp/v1/info
 
 Public endpoint — no authentication required. Returns node information.

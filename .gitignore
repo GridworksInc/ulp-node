@@ -3,4 +3,5 @@ dist/
 .env
 ledger.jsonl
 timestamps.jsonl
+replicas/
 .DS_Store

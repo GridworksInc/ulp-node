@@ -8,15 +8,23 @@ import { v4 as uuidv4, validate as isUuid } from 'uuid';
 import { calculateHash, auditLedger, parseLedgerFile, LedgerEntry } from './hashchain';
 import { loadTsaConfigFromEnv } from './timestamp';
 import { TimestampScheduler, loadTimestampRecords } from './timestampScheduler';
+import { ReplicationManager, parsePeersFromEnv, loadReplicaLedger, listReplicaNodeIds } from './replication';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const PORT = parseInt(process.env.ULP_PORT || '4800', 10);
 const DATA_DIR = process.env.ULP_DATA_DIR || path.join(__dirname, '..', 'data');
 const LEDGER_PATH = path.join(DATA_DIR, 'ledger.jsonl');
 const TIMESTAMPS_PATH = path.join(DATA_DIR, 'timestamps.jsonl');
+const REPLICAS_DIR = path.join(DATA_DIR, 'replicas');
+const PEER_SYNC_INTERVAL_MS = parseInt(process.env.ULP_PEER_SYNC_INTERVAL_MS || '5000', 10);
+const PEER_SYNC_BATCH_SIZE = parseInt(process.env.ULP_PEER_SYNC_BATCH_SIZE || '200', 10);
 const API_KEY = process.env.ULP_API_KEY || '';
 const MAX_BODY_SIZE = process.env.ULP_MAX_BODY_SIZE || '256kb';
 const TSA_INTERVAL_MS = parseInt(process.env.ULP_TSA_INTERVAL_MS || '60000', 10);
+// レプリケーション用の増分取得は既定の200件上限だと大量流入時に追従しづらいため、
+// 個別に上限を引き上げられるようにする(通常のクライアント一覧取得にも影響するため注意)。
+const MAX_LIST_LIMIT = parseInt(process.env.ULP_MAX_LIST_LIMIT || '200', 10);
+const NODE_ID = process.env.ULP_NODE_ID || 'node-staging-001';
 
 // --- 本番環境での事故防止 ---
 // API_KEY未設定のまま本番稼働すると、台帳への書き込みAPIが誰でも叩ける状態になる。
@@ -52,6 +60,16 @@ if (!fs.existsSync(DATA_DIR)) {
 const tsaConfig = loadTsaConfigFromEnv();
 if (!tsaConfig) {
     console.log('[ULP] TSA timestamping disabled (ULP_TSA_URL not set)');
+}
+
+// --- レプリケーション(peer同期)設定 ---
+// ULP_PEERS 未設定なら機能無効(既存動作に影響なし)。
+const peers = parsePeersFromEnv();
+const replicationManager = peers.length > 0
+    ? new ReplicationManager(peers, REPLICAS_DIR, PEER_SYNC_INTERVAL_MS, PEER_SYNC_BATCH_SIZE)
+    : null;
+if (!replicationManager) {
+    console.log('[ULP] Peer replication disabled (ULP_PEERS not set)');
 }
 
 // --- 台帳 (オンメモリ) ---
@@ -181,17 +199,21 @@ app.get('/ulp/v1/envelope/:id', authenticate, (req, res) => {
 });
 
 // GET /ulp/v1/envelopes — Envelope一覧
+//
+// since_sequence はレプリケーション(src/replication.ts)が増分取得に使うカーソル。
+// sequence は1始まりの連番なので、since_sequence=N は「N件目より後」を意味する。
 app.get('/ulp/v1/envelopes', authenticate, (req, res) => {
     let results = [...ledger];
 
-    const { sender_id, receiver_id, envelope_type, from, to } = req.query as Record<string, string>;
+    const { sender_id, receiver_id, envelope_type, from, to, since_sequence } = req.query as Record<string, string>;
     if (sender_id) results = results.filter(e => e.sender.id === sender_id);
     if (receiver_id) results = results.filter(e => e.receiver.id === receiver_id);
     if (envelope_type) results = results.filter(e => e.envelope_type === envelope_type);
     if (from) results = results.filter(e => e.timestamp >= from);
     if (to) results = results.filter(e => e.timestamp <= to);
+    if (since_sequence) results = results.filter(e => e.sequence > parseInt(since_sequence, 10));
 
-    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 200);
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), MAX_LIST_LIMIT);
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
     const paged = results.slice(offset, offset + limit);
 
@@ -225,11 +247,42 @@ app.get('/ulp/v1/ledger/timestamps', authenticate, (_req, res) => {
     res.json({ enabled: tsaConfig !== null, timestamps: records, total: records.length });
 });
 
+// GET /ulp/v1/peers — レプリケーション先(peer)ノードの同期状態
+//
+// 各peerは自分専用のhash chainを持つ(spec/REPLICATION.md参照)。ここでの
+// last_sequence/last_hash は「そのpeerのchainのうち、自ノードがどこまで
+// レプリカとして取り込めているか」を示す。
+app.get('/ulp/v1/peers', authenticate, (_req, res) => {
+    res.json({ peers: replicationManager?.getStatus() ?? [] });
+});
+
+// GET /ulp/v1/replicas/:node_id/envelopes — 保持しているpeerのレプリカ台帳
+//
+// 自ノードが他ノードから複製したchainを、さらに別ノードへ中継できるように
+// 公開する(将来のマルチホップ・フェデレーション用途)。
+app.get('/ulp/v1/replicas/:node_id/envelopes', authenticate, (req, res) => {
+    const nodeId = String(req.params.node_id);
+    if (!listReplicaNodeIds(REPLICAS_DIR).includes(nodeId)) {
+        res.status(404).json({ status: 'NOT_FOUND', message: `No replica held for node_id=${nodeId}` });
+        return;
+    }
+    let entries = loadReplicaLedger(REPLICAS_DIR, nodeId);
+
+    const sinceSequence = req.query.since_sequence as string | undefined;
+    if (sinceSequence) entries = entries.filter(e => e.sequence > parseInt(sinceSequence, 10));
+
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), MAX_LIST_LIMIT);
+    const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
+    const paged = entries.slice(offset, offset + limit);
+
+    res.json({ envelopes: paged, total: entries.length, limit, offset });
+});
+
 // GET /ulp/v1/info — 公開ノード情報 (認証不要)
 app.get('/ulp/v1/info', (_req, res) => {
     res.json({
         ulp_version: 'ULP/1.0',
-        node_id: process.env.ULP_NODE_ID || 'node-staging-001',
+        node_id: NODE_ID,
         node_name: process.env.ULP_NODE_NAME || 'Gridworks ULP Node (Staging)',
         operator: 'Gridworks Inc.',
         supported_types: ['invoice'],
@@ -268,12 +321,14 @@ const server = app.listen(PORT, () => {
     console.log(`[ULP] Envelopes: ${ledger.length}`);
     console.log(`[ULP] Auth: ${API_KEY ? 'enabled' : 'disabled (no ULP_API_KEY set)'}`);
     tsaScheduler?.start();
+    void replicationManager?.start();
 });
 
 // --- Graceful shutdown ---
 function shutdown(signal: string): void {
     console.log(`[ULP] Received ${signal}, shutting down gracefully...`);
     tsaScheduler?.stop();
+    replicationManager?.stop();
     server.close(() => {
         console.log('[ULP] Server closed.');
         process.exit(0);
